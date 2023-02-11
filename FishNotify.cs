@@ -1,4 +1,4 @@
-﻿using Dalamud.Data;
+﻿using Dalamud;
 using Dalamud.Game.Gui;
 using Dalamud.Game.Network;
 using Dalamud.Game.Text.SeStringHandling;
@@ -67,7 +67,7 @@ namespace FishNotify
                     return;
                 }
 
-                var region = regions.Find(r => r.Region == "Global");
+                var region = regions.Find(r => r.Region == GetGameRegion());
                 if (region == null || region.Lists == null)
                 {
                     PluginLog.Warning("No global region found in opcode list");
@@ -94,6 +94,20 @@ namespace FishNotify
             {
                 PluginLog.Error(e, "Could not download/extract opcodes: {}", e.Message);
             }
+        }
+
+        /// <summary>
+        /// Both ClientLanguage.Korean and ClientLanguage.ChineseSimplified have value 4, but the string representation differs depending on the dalamud fork.
+        /// </summary>
+        /// <returns></returns>
+        private string GetGameRegion()
+        {
+            return Enum.GetName(typeof(ClientLanguage), 4) switch
+            {
+                "ChineseSimplified" => "CN",
+                "Korean" => "KR",
+                _ => "Global",
+            };
         }
 
         private void OnNetworkMessage(IntPtr dataPtr, ushort opCode, uint sourceActorId, uint targetActorId, NetworkMessageDirection direction)

@@ -1,25 +1,45 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <Authors></Authors>
-    <Company></Company>
     <Version>5.0</Version>
     <Description>Plays a sound effect when a fish bites</Description>
     <Copyright></Copyright>
     <PackageProjectUrl>https://github.com/carvelli/Fish-Notify</PackageProjectUrl>
-    <Configurations>Release</Configurations>
+    <Configurations>Release;Release-CN</Configurations>
   </PropertyGroup>
 
-  <PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='Release'">
     <TargetFramework>net7.0-windows</TargetFramework>
+    <DalamudLibPath>$(appdata)\XIVLauncher\addon\Hooks\dev\</DalamudLibPath>
+    <OutputPath>dist</OutputPath>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)'=='Release-CN'">
+    <TargetFramework>net6.0-windows</TargetFramework>
+    <DalamudLibPath>E:\ffxiv\CN-dalamud\XIVLauncherCN\Roaming\addon\Hooks\dev\</DalamudLibPath>
+    <OutputPath>dist-CN</OutputPath>
+  </PropertyGroup>
+    
+  <PropertyGroup>
     <Platforms>x64</Platforms>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
-    <OutputPath>dist</OutputPath>
   </PropertyGroup>
+
+  <ItemGroup Condition="'$(Configuration)'=='Release'">
+    <Compile Remove="dist-CN\**" />
+    <EmbeddedResource Remove="dist-CN\**" />
+    <None Remove="dist-CN\**" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(Configuration)'=='Release-CN'">
+    <Compile Remove="dist\**" />
+    <EmbeddedResource Remove="dist\**" />
+    <None Remove="dist\**" />
+  </ItemGroup>
 
   <ItemGroup>
     <Content Include="FishNotify.json">
@@ -27,17 +47,25 @@
     </Content>
   </ItemGroup>
 
-  <PropertyGroup>
-    <DalamudLibPath>$(appdata)\XIVLauncher\addon\Hooks\dev\</DalamudLibPath>
-  </PropertyGroup>
-
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release'">
     <DebugType>none</DebugType>
     <DebugSymbols>false</DebugSymbols>
   </PropertyGroup>
 
-  <ItemGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release-CN'">
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(Configuration)'=='Release'">
     <PackageReference Include="DalamudPackager" Version="2.1.10" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(Configuration)'=='Release-CN'">
+    <PackageReference Include="DalamudPackager" Version="2.1.8" />
+  </ItemGroup>
+  
+  <ItemGroup>
     <PackageReference Include="System.Windows.Extensions" Version="7.0.0" />
     <Reference Include="FFXIVClientStructs">
       <HintPath>$(DalamudLibPath)FFXIVClientStructs.dll</HintPath>
@@ -84,8 +112,12 @@
     </EmbeddedResource>
   </ItemGroup>
 
-  <Target Name="RenameLatestZip" AfterTargets="PackagePlugin">
+  <Target Name="RenameLatestZip" AfterTargets="PackagePlugin" Condition="'$(Configuration)'=='Release'">
     <Exec Command="rename &quot;$(OutDir)$(AssemblyName)\latest.zip&quot; &quot;$(AssemblyName)-$(Version).zip&quot;" />
+  </Target>
+
+  <Target Name="RenameLatestZip" AfterTargets="PackagePlugin" Condition="'$(Configuration)'=='Release-CN'">
+    <Exec Command="rename &quot;$(OutDir)$(AssemblyName)\latest.zip&quot; &quot;$(AssemblyName)-$(Version)-CN.zip&quot;" />
   </Target>
 
 </Project>

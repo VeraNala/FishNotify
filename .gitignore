@@ -1,4 +1,5 @@
 .vs/
 obj/
 dist/
+dist-CN/
 *.user
