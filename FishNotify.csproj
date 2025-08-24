@@ -1,14 +1,8 @@
-﻿<Project Sdk="Dalamud.NET.Sdk/12.0.2">
+﻿<Project Sdk="Dalamud.NET.Sdk/13.0.0">
   <PropertyGroup>
     <Version>9.0</Version>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <OutputPath>dist</OutputPath>
-  </PropertyGroup>
-
-  <!-- fix dubious warnings and defaults for dalamud projects that only seem to be an issue after using Dalamud.NET.Sdk -->
-  <PropertyGroup>
-    <!-- no clue which bright ligth thought I don't want to see default items (e.g. .targets files, or the plugin manifest) -->
-    <EnableDefaultNoneItems>true</EnableDefaultNoneItems>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -17,7 +11,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="System.Windows.Extensions" Version="9.0.3" />
+    <PackageReference Include="System.Windows.Extensions" Version="9.0.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -34,9 +28,5 @@
       <LastGenOutput>Resources.Designer.cs</LastGenOutput>
     </EmbeddedResource>
   </ItemGroup>
-
-  <Target Name="RenameLatestZip" AfterTargets="PackagePlugin">
-    <Exec Command="rename &quot;$(OutDir)$(AssemblyName)\latest.zip&quot; &quot;$(AssemblyName)-$(Version).zip&quot;" />
-  </Target>
 
 </Project>

@@ -1,144 +1,159 @@
-﻿using Dalamud.Game.Network;
 using Dalamud.Game.Text.SeStringHandling;
 using Dalamud.Interface.Colors;
 using Dalamud.IoC;
 using Dalamud.Plugin;
-using ImGuiNET;
-using Newtonsoft.Json;
+using Dalamud.Bindings.ImGui;
 using System;
-using System.Collections.Generic;
-using System.Net.Http;
 using System.Runtime.InteropServices;
-using System.Threading.Tasks;
 using Dalamud.Plugin.Services;
+using Dalamud.Game;
 
 namespace FishNotify;
 
 public sealed class FishNotifyPlugin : IDalamudPlugin
 {
-    [PluginService]
-    private IDalamudPluginInterface PluginInterface { get; set; } = null!;
+    private IDalamudPluginInterface PluginInterface { get; }
+    private IChatGui Chat { get; }
+    private IPluginLog PluginLog { get; }
+    private IGameInteropProvider GameInteropProvider { get; }
+    private ISigScanner SigScanner { get; }
+    private IFramework Framework { get; }
 
-    [PluginService]
-    private IGameNetwork Network { get; set; } = null!;
-
-    [PluginService]
-    private IChatGui Chat { get; set; } = null!;
-
-    [PluginService]
-    private IPluginLog PluginLog { get; set; } = null!;
-
-    private readonly Configuration _configuration;
+    private Configuration _configuration;
     private bool _settingsVisible;
-    private int _expectedOpCode = -1;
     private uint _fishCount;
-
-    public FishNotifyPlugin()
+    
+    // Memory location for bite type
+    private IntPtr _tugTypeAddress;
+    
+    // Bite types (from AutoHook)
+    private enum BiteType : byte
     {
+        Unknown = 0,
+        Weak = 36,      // Light tug (!)
+        Strong = 37,    // Medium tug (!!)
+        Legendary = 38, // Heavy tug (!!!)
+        None = 255
+    }
+    
+    private BiteType _lastBite = BiteType.None;
+    private bool _fishingState = false;
+
+    public FishNotifyPlugin(
+        IDalamudPluginInterface pluginInterface,
+        IChatGui chat,
+        IPluginLog pluginLog,
+        IGameInteropProvider gameInteropProvider,
+        ISigScanner sigScanner,
+        IFramework framework)
+    {
+        PluginInterface = pluginInterface;
+        Chat = chat;
+        PluginLog = pluginLog;
+        GameInteropProvider = gameInteropProvider;
+        SigScanner = sigScanner;
+        Framework = framework;
+        
         _configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
 
-        Network.NetworkMessage += OnNetworkMessage;
+        // Find the tug type address using the signature from AutoHook
+        // This signature points to the memory location that holds the current bite type
+        try
+        {
+            // Use ISigScanner to find the signature
+            var sigAddress = SigScanner.GetStaticAddressFromSig("48 8D 35 ?? ?? ?? ?? 4C 8B CE");
+            
+            if (sigAddress != IntPtr.Zero)
+            {
+                _tugTypeAddress = sigAddress;
+                PluginLog.Information($"Found tug type address at {_tugTypeAddress:X}");
+            }
+            else
+            {
+                PluginLog.Warning("Could not find tug type signature");
+            }
+        }
+        catch (Exception ex)
+        {
+            PluginLog.Error(ex, "Failed to find tug type signature");
+        }
+
+        Framework.Update += OnFrameworkUpdate;
         PluginInterface.UiBuilder.Draw += OnDrawUI;
         PluginInterface.UiBuilder.OpenConfigUi += OnOpenConfigUi;
-
-        var client = new HttpClient();
-        client.GetStringAsync("https://raw.githubusercontent.com/karashiiro/FFXIVOpcodes/master/opcodes.min.json")
-            .ContinueWith(ExtractOpCode);
     }
 
     public void Dispose()
     {
-        Network.NetworkMessage -= OnNetworkMessage;
+        Framework.Update -= OnFrameworkUpdate;
         PluginInterface.UiBuilder.Draw -= OnDrawUI;
         PluginInterface.UiBuilder.OpenConfigUi -= OnOpenConfigUi;
     }
-
-    private void ExtractOpCode(Task<string> task)
+    
+    private unsafe void OnFrameworkUpdate(IFramework framework)
     {
+        if (_tugTypeAddress == IntPtr.Zero)
+            return;
+        
         try
         {
-            var regions = JsonConvert.DeserializeObject<List<OpcodeRegion>>(task.Result);
-            if (regions == null)
+            var currentBite = *(BiteType*)_tugTypeAddress;
+            
+            // Check if we're fishing (bite type is not None)
+            var currentlyFishing = currentBite != BiteType.None;
+            
+            // Detect when fishing starts
+            if (!_fishingState && currentlyFishing)
             {
-                PluginLog.Warning("No regions found in opcode list");
-                return;
+                _fishingState = true;
+                _lastBite = BiteType.Unknown;
             }
-
-            var region = regions.Find(r => r.Region == "Global");
-            if (region == null || region.Lists == null)
+            // Detect when fishing ends
+            else if (_fishingState && !currentlyFishing)
             {
-                PluginLog.Warning("No global region found in opcode list");
-                return;
+                _fishingState = false;
+                _lastBite = BiteType.None;
+                Sounds.Stop();
             }
-
-            if (!region.Lists.TryGetValue("ServerZoneIpcType", out List<OpcodeList>? serverZoneIpcTypes) || serverZoneIpcTypes == null)
+            
+            // Detect bite changes while fishing
+            if (_fishingState && currentBite != _lastBite && currentBite != BiteType.Unknown && currentBite != BiteType.None)
             {
-                PluginLog.Warning("No ServerZoneIpcType in opcode list");
-                return;
+                OnBite(currentBite);
+                _lastBite = currentBite;
             }
-
-            var eventPlay = serverZoneIpcTypes.Find(opcode => opcode.Name == "EventPlay");
-            if (eventPlay == null)
-            {
-                PluginLog.Warning("No EventPlay opcode in ServerZoneIpcType");
-                return;
-            }
-
-            _expectedOpCode = eventPlay.Opcode;
-            PluginLog.Debug($"Found EventPlay opcode {_expectedOpCode:X4}");
         }
-        catch (Exception e)
+        catch (Exception ex)
         {
-            PluginLog.Error(e, "Could not download/extract opcodes: {}", e.Message);
+            PluginLog.Error(ex, "Error reading bite type");
         }
     }
-
-    private void OnNetworkMessage(IntPtr dataPtr, ushort opCode, uint sourceActorId, uint targetActorId, NetworkMessageDirection direction)
+    
+    private void OnBite(BiteType bite)
     {
-        if (direction != NetworkMessageDirection.ZoneDown || opCode != _expectedOpCode)
-            return;
-
-        var data = new byte[32];
-        Marshal.Copy(dataPtr, data, 0, data.Length);
-
-        int eventId = BitConverter.ToInt32(data, 8);
-        short scene = BitConverter.ToInt16(data, 12);
-        int param5 = BitConverter.ToInt32(data, 28);
-
-        // Fishing event?
-        if (eventId != 0x00150001)
-            return;
-
-        // Fish hooked?
-        if (scene != 5)
-            return;
-
-        switch (param5)
+        _fishCount++;
+        
+        switch (bite)
         {
-
-            case 0x124:
+            case BiteType.Weak:
                 // light tug (!)
-                ++_fishCount;
                 Sounds.PlaySound(Resources.Info);
                 SendChatAlert("light");
+                PluginLog.Debug("Fish bite: Light tug");
                 break;
 
-            case 0x125:
+            case BiteType.Strong:
                 // medium tug (!!)
-                ++_fishCount;
                 Sounds.PlaySound(Resources.Alert);
                 SendChatAlert("medium");
+                PluginLog.Debug("Fish bite: Medium tug");
                 break;
 
-            case 0x126:
+            case BiteType.Legendary:
                 // heavy tug (!!!)
-                ++_fishCount;
                 Sounds.PlaySound(Resources.Alarm);
                 SendChatAlert("heavy");
-                break;
-
-            default:
-                Sounds.Stop();
+                PluginLog.Debug("Fish bite: Heavy tug");
                 break;
         }
     }
@@ -177,10 +192,22 @@ public sealed class FishNotifyPlugin : IDalamudPlugin
                 PluginInterface.SavePluginConfig(_configuration);
             }
 
-            if (_expectedOpCode > -1)
-                ImGui.TextColored(ImGuiColors.HealerGreen, $"Status: {(_fishCount == 0 ? "Unknown (not triggered yet)" : $"OK ({_fishCount} fish hooked)")}, opcode = {_expectedOpCode:X}");
+            if (_tugTypeAddress != IntPtr.Zero)
+            {
+                ImGui.TextColored(ImGuiColors.HealerGreen, $"Status: {(_fishCount == 0 ? "Ready (not triggered yet)" : $"OK ({_fishCount} fish hooked)")}");
+                
+                if (_fishingState)
+                {
+                    ImGui.Text($"Currently fishing - Last bite: {_lastBite}");
+                }
+            }
             else
-                ImGui.TextColored(ImGuiColors.DalamudRed, "Status: No opcode :(");
+            {
+                ImGui.TextColored(ImGuiColors.DalamudRed, "Status: Failed to initialize (signature not found)");
+            }
+            
+            ImGui.Spacing();
+            ImGui.TextColored(ImGuiColors.DalamudGrey, "Note: Using memory reading for bite detection");
         }
         ImGui.End();
     }
